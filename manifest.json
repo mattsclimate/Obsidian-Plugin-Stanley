@@ -1,0 +1,10 @@
+{
+	"id": "stanley",
+	"name": "Stanley",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Turns Obsidian into Stanley",
+	"author": "mattsclimate",
+	"authorUrl": "https://github.com/mattsclimate",
+	"isDesktopOnly": true
+}

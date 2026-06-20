@@ -112,18 +112,31 @@ export class IndexManager {
     // Determine batch size and throttle delay based on settings
     const ecoMode = this.plugin.settings.ecoMode;
     const batchSize = ecoMode ? 2 : 10;
-    const throttleMs = ecoMode ? 5000 : 1000;
+    let throttleMs = ecoMode ? 5000 : 1000;
 
     const batch = this.queue.slice(0, batchSize);
     this.queue = this.queue.slice(batchSize);
 
-    try {
-      await Promise.all(batch.map((file) => this.indexFile(file)));
-      if (batch.length > 0) {
-        await this.plugin.saveSettings();
-      }
-    } catch (err) {
-      console.error('Stanley: Error indexing batch', err);
+    const failedFiles: TFile[] = [];
+
+    await Promise.all(
+      batch.map(async (file) => {
+        try {
+          await this.indexFile(file);
+        } catch (err) {
+          console.error(`Stanley: Error indexing ${file.path}`, err);
+          failedFiles.push(file);
+        }
+      })
+    );
+
+    // Put failed files back at the front of the queue to try again later
+    if (failedFiles.length > 0) {
+      this.queue.unshift(...failedFiles);
+      // Temporarily increase throttle time to respect API cooldowns (15s in Eco, 5s normal)
+      throttleMs = ecoMode ? 15000 : 5000;
+    } else if (batch.length > 0) {
+      await this.plugin.saveSettings();
     }
 
     // Schedule next batch
@@ -136,7 +149,7 @@ export class IndexManager {
   private async indexFile(file: TFile): Promise<void> {
     this.store.removeByFile(file.path);
     const content = await this.app.vault.read(file);
-    const chunks = this.embeddingService.chunkNote(file, content, this.plugin.settings);
+    const chunks = await this.embeddingService.chunkNote(file, content, this.plugin.settings);
     if (chunks.length === 0) return;
     const embedded = await this.embeddingService.embedChunks(chunks);
     this.store.insert(embedded);

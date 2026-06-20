@@ -123,5 +123,35 @@ describe('IndexManager', () => {
         0.5 // 1 skipped out of 2 total
       );
     });
+
+    it('retries indexing failed files by putting them back in the queue with cooldown', async () => {
+      const file1 = makeFile('a.md', 1000);
+      vi.spyOn(mockApp.vault, 'getMarkdownFiles').mockReturnValue([file1]);
+
+      let callCount = 0;
+      mockEmbeddingService.embedChunks = vi.fn().mockImplementation(async () => {
+        if (callCount++ === 0) {
+          throw new Error('API Rate Limit error');
+        }
+        return [{ filePath: 'a.md', content: 'chunk', charOffset: 0, embedding: [0.1] }];
+      });
+
+      const plugin = makePlugin({});
+      const manager = new IndexManager(mockApp, mockStore, mockEmbeddingService, mockMonitor, plugin);
+
+      const originalSetTimeout = global.setTimeout;
+      vi.stubGlobal('setTimeout', vi.fn().mockImplementation((fn: any) => {
+        // execute callback immediately and asynchronously to mimic real event loop yield
+        Promise.resolve().then(fn);
+        return 123;
+      }));
+
+      await manager.initialize();
+
+      expect(mockEmbeddingService.embedChunks).toHaveBeenCalledTimes(2);
+      expect(plugin.settings.fileModTimes['a.md']).toBe(1000);
+      
+      vi.stubGlobal('setTimeout', originalSetTimeout);
+    });
   });
 });

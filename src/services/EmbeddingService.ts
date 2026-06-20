@@ -6,7 +6,7 @@ import type { StanleySettings } from '../settings';
 export class EmbeddingService {
   constructor(private client: AIProviderManager) {}
 
-  chunkNote(file: TFile, content: string, settings: StanleySettings): Chunk[] {
+  async chunkNote(file: TFile, content: string, settings: StanleySettings): Promise<Chunk[]> {
     if (!content.trim()) return [];
 
     const title = file.basename;
@@ -14,8 +14,14 @@ export class EmbeddingService {
     const chunks: Chunk[] = [];
     let currentChunk = '';
     let charOffset = 0;
+    let count = 0;
 
     for (const para of paragraphs) {
+      // Yield to the main thread periodically for large files to prevent UI locking
+      if (count++ % 20 === 0) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+
       const candidate = currentChunk ? currentChunk + '\n\n' + para : para;
 
       if (candidate.length > settings.chunkSize && currentChunk.length > 0) {
@@ -45,11 +51,16 @@ export class EmbeddingService {
   }
 
   async embedChunks(chunks: Chunk[]): Promise<EmbeddedChunk[]> {
-    return Promise.all(
-      chunks.map(async (chunk) => ({
+    const results: EmbeddedChunk[] = [];
+    for (const chunk of chunks) {
+      const embedding = await this.client.embed(chunk.content);
+      results.push({
         ...chunk,
-        embedding: await this.client.embed(chunk.content),
-      }))
-    );
+        embedding,
+      });
+      // Add a polite delay for free-tier APIs (e.g., 300ms) to prevent Rate Limit Tsunami (HTTP 429)
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    return results;
   }
 }

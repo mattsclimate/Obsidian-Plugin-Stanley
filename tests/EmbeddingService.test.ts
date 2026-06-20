@@ -34,42 +34,42 @@ describe('EmbeddingService', () => {
   });
 
   describe('chunkNote', () => {
-    it('prepends note title to each chunk', () => {
+    it('prepends note title to each chunk', async () => {
       const file = new TFile('folder/My Note.md');
       const content = 'First paragraph.\n\nSecond paragraph.';
-      const chunks = service.chunkNote(file, content, defaultSettings);
+      const chunks = await service.chunkNote(file, content, defaultSettings);
       expect(chunks.every((c) => c.content.startsWith('My Note\n'))).toBe(true);
     });
 
-    it('returns empty array for empty content', () => {
+    it('returns empty array for empty content', async () => {
       const file = new TFile('a.md');
-      const chunks = service.chunkNote(file, '', defaultSettings);
+      const chunks = await service.chunkNote(file, '', defaultSettings);
       expect(chunks).toHaveLength(0);
     });
 
-    it('returns empty array for whitespace-only content', () => {
+    it('returns empty array for whitespace-only content', async () => {
       const file = new TFile('a.md');
-      const chunks = service.chunkNote(file, '   \n\n  ', defaultSettings);
+      const chunks = await service.chunkNote(file, '   \n\n  ', defaultSettings);
       expect(chunks).toHaveLength(0);
     });
 
-    it('splits content into multiple chunks when content exceeds chunkSize', () => {
+    it('splits content into multiple chunks when content exceeds chunkSize', async () => {
       const file = new TFile('a.md');
       // 5 paragraphs of 30 chars each, chunkSize=100 so ~3 paragraphs fit per chunk
       const content = Array(5).fill('A'.repeat(28)).join('\n\n');
-      const chunks = service.chunkNote(file, content, defaultSettings);
+      const chunks = await service.chunkNote(file, content, defaultSettings);
       expect(chunks.length).toBeGreaterThan(1);
     });
 
-    it('sets filePath from the TFile path', () => {
+    it('sets filePath from the TFile path', async () => {
       const file = new TFile('vault/notes/test.md');
-      const chunks = service.chunkNote(file, 'Some content here.', defaultSettings);
+      const chunks = await service.chunkNote(file, 'Some content here.', defaultSettings);
       expect(chunks.every((c) => c.filePath === 'vault/notes/test.md')).toBe(true);
     });
 
-    it('uses basename without extension for title', () => {
+    it('uses basename without extension for title', async () => {
       const file = new TFile('My Document.md');
-      const chunks = service.chunkNote(file, 'Content here.', defaultSettings);
+      const chunks = await service.chunkNote(file, 'Content here.', defaultSettings);
       expect(chunks[0]?.content).toMatch(/^My Document\n/);
     });
   });
@@ -77,7 +77,7 @@ describe('EmbeddingService', () => {
   describe('embedChunks', () => {
     it('calls embed for each chunk and returns EmbeddedChunks', async () => {
       const file = new TFile('a.md');
-      const chunks = service.chunkNote(file, 'Content.', defaultSettings);
+      const chunks = await service.chunkNote(file, 'Content.', defaultSettings);
       const embedded = await service.embedChunks(chunks);
       expect(embedded).toHaveLength(chunks.length);
       expect(embedded[0]?.embedding).toEqual([0.1, 0.2, 0.3]);

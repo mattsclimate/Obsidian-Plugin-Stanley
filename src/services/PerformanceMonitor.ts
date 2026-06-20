@@ -1,5 +1,6 @@
 import type { StanleySettings } from '../settings';
 import type { PerformanceStats } from '../types';
+import type { IndexManager } from './IndexManager';
 
 interface QueryRecord {
   totalLatencyMs: number;
@@ -13,6 +14,57 @@ export class PerformanceMonitor {
   private lastIndexDurationMs = 0;
   private cacheHitRate = 0;
   private indexedChunkCount = 0;
+
+  // Lag detection properties
+  private indexManager?: IndexManager;
+  private lagCheckInterval: any = null;
+  private consecutiveStableTicks = 0;
+  private isPausedByLag = false;
+
+  setIndexManager(indexManager: IndexManager): void {
+    this.indexManager = indexManager;
+    this.startLagDetection();
+  }
+
+  cleanup(): void {
+    if (this.lagCheckInterval) {
+      clearInterval(this.lagCheckInterval);
+      this.lagCheckInterval = null;
+    }
+  }
+
+  private startLagDetection(): void {
+    if (this.lagCheckInterval) clearInterval(this.lagCheckInterval);
+
+    let lastTime = Date.now();
+    this.lagCheckInterval = setInterval(() => {
+      const now = Date.now();
+      const dispatchTime = now - lastTime;
+      // standard expected interval is 100ms. Any dispatchTime > 150ms implies >50ms lag.
+      const lag = dispatchTime - 100;
+      lastTime = now;
+
+      if (lag > 100) { // Large spike in UI latency/event loop lag
+        this.consecutiveStableTicks = 0;
+        if (!this.isPausedByLag && this.indexManager) {
+          console.warn(`Stanley: UI latency detected (${lag}ms lag). Pausing background tasks.`);
+          this.isPausedByLag = true;
+          this.indexManager.pause();
+        }
+      } else if (lag < 30) {
+        if (this.isPausedByLag) {
+          this.consecutiveStableTicks++;
+          if (this.consecutiveStableTicks >= 10 && this.indexManager) { // Stable for 1 second (10 * 100ms)
+            console.log('Stanley: UI stabilized. Resuming background tasks.');
+            this.isPausedByLag = false;
+            this.indexManager.resume();
+          }
+        }
+      } else {
+        this.consecutiveStableTicks = 0;
+      }
+    }, 100);
+  }
 
   recordQuery(
     embedMs: number,
@@ -28,6 +80,22 @@ export class PerformanceMonitor {
     };
     this.queryBuffer.push(record);
     this.allQueries.push(record);
+
+    // If query latency is massive (> 8 seconds) and indexer is running, pause it to save resources
+    const totalLatency = embedMs + retrieveMs + generateMs;
+    if (totalLatency > 8000 && this.indexManager && !this.isPausedByLag) {
+      console.warn(`Stanley: High query latency (${totalLatency}ms). Throttling background indexer.`);
+      this.isPausedByLag = true;
+      this.indexManager.pause();
+      
+      // Auto-resume after 20 seconds
+      setTimeout(() => {
+        if (this.isPausedByLag && this.indexManager) {
+          this.isPausedByLag = false;
+          this.indexManager.resume();
+        }
+      }, 20000);
+    }
   }
 
   recordIndex(chunkCount: number, durationMs: number, cacheHitRate: number): void {

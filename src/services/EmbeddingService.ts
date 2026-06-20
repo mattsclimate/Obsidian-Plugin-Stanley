@@ -1,10 +1,10 @@
 import type { TFile } from 'obsidian';
-import type { OllamaClient } from './OllamaClient';
+import type { AIProviderManager } from './AIProviderManager';
 import type { Chunk, EmbeddedChunk } from '../types';
 import type { StanleySettings } from '../settings';
 
 export class EmbeddingService {
-  constructor(private client: OllamaClient) {}
+  constructor(private client: AIProviderManager) {}
 
   chunkNote(file: TFile, content: string, settings: StanleySettings): Chunk[] {
     if (!content.trim()) return [];

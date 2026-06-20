@@ -1,4 +1,4 @@
-import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf, setIcon, Menu } from 'obsidian';
+import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf, setIcon } from 'obsidian';
 import type StanleyPlugin from '../main';
 import type { RAGEngine } from '../services/RAGEngine';
 import type { IndexManager } from '../services/IndexManager';
@@ -9,6 +9,17 @@ import type { VaultService, VaultItem } from '../services/VaultService';
 import type { ChatMessage } from '../types';
 
 export const VIEW_TYPE_CHAT = 'stanley-chat-view';
+
+interface VirtualMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  cliCommands: Array<{
+    command: string;
+    label?: string;
+    status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
+    statusText?: string;
+  }>;
+}
 
 export class ChatView extends ItemView {
   private plugin: StanleyPlugin;
@@ -28,6 +39,14 @@ export class ChatView extends ItemView {
   private modelSelectorEl!: HTMLElement;
 
   private lastQuery = '';
+
+  // Virtualization state
+  private history: VirtualMessage[] = [];
+  private messageElements: Array<{
+    wrapper: HTMLDivElement;
+    rendered: boolean;
+    height: number;
+  }> = [];
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -60,6 +79,8 @@ export class ChatView extends ItemView {
 
     this.renderHeader(root);
     this.messagesEl = root.createDiv({ cls: 'stanley-messages' });
+    this.messagesEl.addEventListener('scroll', () => this.virtualizeMessages());
+
     this.renderInputArea(root);
     this.renderStatsFooter(root);
 
@@ -130,7 +151,16 @@ export class ChatView extends ItemView {
 
   private updateModelSelectorText(): void {
     this.modelSelectorEl.empty();
-    const name = this.plugin.settings.chatModel.split(':')[0] || this.plugin.settings.chatModel;
+    const provider = this.plugin.settings.aiProvider;
+    let model = '';
+    if (provider === 'ollama') {
+      model = this.plugin.settings.chatModel;
+    } else if (provider === 'anthropic') {
+      model = this.plugin.settings.chatModelAnthropic;
+    } else if (provider === 'gemini') {
+      model = this.plugin.settings.chatModelGemini;
+    }
+    const name = model.split(':')[0] || model;
     this.modelSelectorEl.createEl('span', { text: name });
     const icon = this.modelSelectorEl.createDiv({ cls: 'stanley-selector-chevron' });
     setIcon(icon, 'chevron-down');
@@ -148,26 +178,39 @@ export class ChatView extends ItemView {
     menu.style.left = `${rect.left}px`;
     menu.style.bottom = `${window.innerHeight - rect.top + 8}px`;
 
-    const models = await this.plugin.ollamaClient.listModels();
+    const models = await this.plugin.aiProviderManager.listModels();
     
     for (const model of models) {
+      const provider = this.plugin.settings.aiProvider;
+      const currentModel = provider === 'ollama' ? this.plugin.settings.chatModel :
+                            provider === 'anthropic' ? this.plugin.settings.chatModelAnthropic :
+                            this.plugin.settings.chatModelGemini;
+
       const item = menu.createDiv({ 
-        cls: `stanley-dropdown-item ${model === this.plugin.settings.chatModel ? 'is-selected' : ''}` 
+        cls: `stanley-dropdown-item ${model === currentModel ? 'is-selected' : ''}` 
       });
       const name = model.split(':')[0] || model;
       item.createDiv({ text: name, cls: 'stanley-model-name' });
       
       // Artificial descriptions for a premium feel
-      let desc = 'Standard model';
-      if (model.includes('llama3')) desc = 'Most capable for ambitious work';
-      if (model.includes('mistral')) desc = 'Efficient for everyday tasks';
-      if (model.includes('phi3')) desc = 'Fastest for quick answers';
+      let desc = 'Cloud API model';
+      if (model.includes('llama3')) desc = 'Most capable local model';
+      if (model.includes('claude-3-5-sonnet')) desc = 'State of the art cloud model';
+      if (model.includes('claude-3-5-haiku')) desc = 'Fast and efficient Claude model';
+      if (model.includes('gemini-2.5-flash')) desc = 'Extremely fast multi-modal cloud model';
+      if (model.includes('gemini-2.5-pro')) desc = 'Highly analytical Google model';
       
       item.createDiv({ text: desc, cls: 'stanley-model-desc' });
       
       item.addEventListener('click', async () => {
-        this.plugin.settings.chatModel = model;
-        this.plugin.ollamaClient.chatModel = model;
+        if (provider === 'ollama') {
+          this.plugin.settings.chatModel = model;
+        } else if (provider === 'anthropic') {
+          this.plugin.settings.chatModelAnthropic = model;
+        } else if (provider === 'gemini') {
+          this.plugin.settings.chatModelGemini = model;
+        }
+        this.plugin.aiProviderManager.updateSettings(this.plugin.settings);
         await this.plugin.saveSettings();
         this.updateModelSelectorText();
         menu.remove();
@@ -337,17 +380,19 @@ export class ChatView extends ItemView {
   }
 
   private async updateStatus(): Promise<void> {
-    const healthy = await this.plugin.ollamaClient.checkHealth();
+    const healthy = await this.plugin.aiProviderManager.checkHealth();
     this.statusDot.removeClass('stanley-status-unknown', 'stanley-status-ok', 'stanley-status-error');
     if (healthy) {
       this.statusDot.addClass('stanley-status-ok');
-      this.statusDot.title = 'Ollama connected';
+      const provider = this.plugin.settings.aiProvider;
+      this.statusDot.title = `${provider.toUpperCase()} connected`;
     } else {
       this.statusDot.addClass('stanley-status-error');
-      this.statusDot.title = `Ollama unreachable`;
+      const provider = this.plugin.settings.aiProvider;
+      this.statusDot.title = `${provider.toUpperCase()} disconnected`;
       this.appendMessage(
         'assistant',
-        `⚠ Ollama not reachable at \`${this.plugin.settings.ollamaBaseUrl}\`.`
+        `⚠ Active provider (${provider.toUpperCase()}) not configured or unreachable.`
       );
     }
   }
@@ -363,7 +408,9 @@ export class ChatView extends ItemView {
 
     this.appendMessage('user', query);
 
-    const streamingEl = this.appendStreamingBubble();
+    const msgIndex = this.appendMessage('assistant', '');
+    const wrapper = this.messageElements[msgIndex]!.wrapper;
+    const bubble = wrapper.querySelector('.stanley-bubble-assistant') as HTMLElement;
     let streamedText = '';
 
     try {
@@ -393,72 +440,59 @@ export class ChatView extends ItemView {
         this.plugin.settings,
         (token) => {
           streamedText += token;
-          streamingEl.textContent = streamedText;
+          this.history[msgIndex]!.content = streamedText;
+          if (this.messageElements[msgIndex]!.rendered) {
+            bubble.textContent = streamedText;
+          }
           this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight, behavior: 'smooth' });
         },
         explicitContext
       );
 
-      await this.parseAndExecuteActions(result.response);
+      // Parse CLI actions
+      const lines = result.response.split('\n');
+      const cliCommands: VirtualMessage['cliCommands'] = [];
+      let pendingLabel: string | undefined;
+      for (const line of lines) {
+        const actionMatch = line.match(/^\[ACTION: (.+)\]$/);
+        if (actionMatch) {
+          pendingLabel = actionMatch[1];
+          continue;
+        }
+        if (this.cliService.parse(line)) {
+          cliCommands.push({
+            command: line,
+            label: pendingLabel,
+            status: 'pending',
+          });
+          pendingLabel = undefined;
+        } else if (line.trim() !== '') {
+          pendingLabel = undefined;
+        }
+      }
+
       const cleanResponse = this.stripActionTags(result.response);
-      streamingEl.textContent = '';
-      await MarkdownRenderer.renderMarkdown(cleanResponse, streamingEl, '', this);
+      
+      this.history[msgIndex]!.content = cleanResponse;
+      this.history[msgIndex]!.cliCommands = cliCommands;
+
+      // Re-render and finalize turn height
+      this.renderMessageContent(msgIndex, wrapper);
+      this.messageElements[msgIndex]!.height = wrapper.offsetHeight;
+      this.messageElements[msgIndex]!.rendered = true;
 
       if (result.settings !== this.plugin.settings) {
         this.plugin.settings = result.settings;
         await this.plugin.saveSettings();
       }
     } catch (err) {
-      streamingEl.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+      if (this.messageElements[msgIndex]!.rendered) {
+        bubble.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+      }
     } finally {
       this.sendBtn.disabled = false;
       this.inputEl.focus();
     }
-  }
-
-  private async parseAndExecuteActions(text: string): Promise<void> {
-    const lines = text.split('\n');
-    let pendingLabel: string | undefined;
-    for (const line of lines) {
-      const actionMatch = line.match(/^\[ACTION: (.+)\]$/);
-      if (actionMatch) {
-        pendingLabel = actionMatch[1];
-        continue;
-      }
-      if (this.cliService.parse(line)) {
-        this.renderCLIBlock(this.messagesEl, line, pendingLabel);
-        pendingLabel = undefined;
-      } else if (line.trim() !== '') {
-        pendingLabel = undefined;
-      }
-    }
-  }
-
-  private renderCLIBlock(container: HTMLElement, commandStr: string, label?: string): void {
-    const block = container.createDiv({ cls: 'stanley-cli-block' });
-    if (label) block.createDiv({ cls: 'stanley-cli-header', text: label });
-    block.createEl('code', { text: commandStr, cls: 'stanley-cli-command' });
-
-    const actionsRow = block.createDiv({ cls: 'stanley-cli-actions' });
-    const runBtn = actionsRow.createEl('button', { text: 'Run', cls: 'stanley-cli-run-btn' });
-    const cancelBtn = actionsRow.createEl('button', { text: 'Cancel', cls: 'stanley-cli-cancel-btn' });
-
-    cancelBtn.addEventListener('click', () => block.remove());
-    runBtn.addEventListener('click', async () => {
-      runBtn.disabled = true;
-      runBtn.textContent = 'Running...';
-      const cmd = this.cliService.parse(commandStr);
-      if (cmd) {
-        try {
-          const result = await this.cliService.execute(cmd);
-          actionsRow.empty();
-          actionsRow.createDiv({ text: `✓ ${result}`, cls: 'stanley-cli-status-ok' });
-        } catch (err) {
-          actionsRow.empty();
-          actionsRow.createDiv({ text: `✗ Failed — ${err instanceof Error ? err.message : String(err)}`, cls: 'stanley-cli-status-err' });
-        }
-      }
-    });
   }
 
   private stripActionTags(text: string): string {
@@ -468,17 +502,143 @@ export class ChatView extends ItemView {
       .trim();
   }
 
-  private appendMessage(role: 'user' | 'assistant', content: string): void {
-    const bubble = this.messagesEl.createDiv({ cls: `stanley-bubble stanley-bubble-${role}` });
-    bubble.textContent = content;
+  private appendMessage(role: 'user' | 'assistant', content: string): number {
+    const msgIndex = this.history.length;
+    this.history.push({
+      role,
+      content,
+      cliCommands: [],
+    });
+
+    const wrapper = this.messagesEl.createDiv({ cls: 'stanley-bubble-wrapper' });
+    this.messageElements.push({
+      wrapper,
+      rendered: true,
+      height: 0,
+    });
+
+    this.renderMessageContent(msgIndex, wrapper);
+    
+    // Measure height
+    this.messageElements[msgIndex]!.height = wrapper.offsetHeight;
+
     this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight, behavior: 'smooth' });
+    
+    // Check virtualization
+    this.virtualizeMessages();
+
+    return msgIndex;
   }
 
-  private appendStreamingBubble(): HTMLElement {
-    const bubble = this.messagesEl.createDiv({
-      cls: 'stanley-bubble stanley-bubble-assistant stanley-bubble-streaming',
-    });
-    this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight, behavior: 'smooth' });
-    return bubble;
+  private renderMessageContent(index: number, container: HTMLElement): void {
+    container.empty();
+    const msg = this.history[index];
+    if (!msg) return;
+
+    if (msg.role === 'user') {
+      const bubble = container.createDiv({ cls: 'stanley-bubble stanley-bubble-user' });
+      bubble.textContent = msg.content;
+    } else {
+      const bubble = container.createDiv({ cls: 'stanley-bubble stanley-bubble-assistant' });
+      if (msg.content) {
+        void MarkdownRenderer.renderMarkdown(msg.content, bubble, '', this);
+      } else {
+        bubble.addClass('stanley-bubble-streaming');
+      }
+
+      if (msg.cliCommands && msg.cliCommands.length > 0) {
+        for (let cmdIndex = 0; cmdIndex < msg.cliCommands.length; cmdIndex++) {
+          const cmd = msg.cliCommands[cmdIndex]!;
+          if (cmd.status === 'cancelled') continue;
+          this.renderCLIBlock(container, index, cmdIndex);
+        }
+      }
+    }
+  }
+
+  private renderCLIBlock(container: HTMLElement, msgIndex: number, cmdIndex: number): void {
+    const msg = this.history[msgIndex]!;
+    const cmd = msg.cliCommands[cmdIndex]!;
+
+    const block = container.createDiv({ cls: 'stanley-cli-block' });
+    if (cmd.label) block.createDiv({ cls: 'stanley-cli-header', text: cmd.label });
+    block.createEl('code', { text: cmd.command, cls: 'stanley-cli-command' });
+
+    const actionsRow = block.createDiv({ cls: 'stanley-cli-actions' });
+
+    if (cmd.status === 'pending') {
+      const runBtn = actionsRow.createEl('button', { text: 'Run', cls: 'stanley-cli-run-btn' });
+      const cancelBtn = actionsRow.createEl('button', { text: 'Cancel', cls: 'stanley-cli-cancel-btn' });
+
+      cancelBtn.addEventListener('click', () => {
+        cmd.status = 'cancelled';
+        block.remove();
+        const wrapper = this.messageElements[msgIndex]?.wrapper;
+        if (wrapper && this.messageElements[msgIndex]) {
+          this.messageElements[msgIndex]!.height = wrapper.offsetHeight;
+        }
+      });
+
+      runBtn.addEventListener('click', async () => {
+        runBtn.disabled = true;
+        runBtn.textContent = 'Running...';
+        cmd.status = 'running';
+        const parsed = this.cliService.parse(cmd.command);
+        if (parsed) {
+          try {
+            const result = await this.cliService.execute(parsed);
+            cmd.status = 'success';
+            cmd.statusText = `✓ ${result}`;
+          } catch (err) {
+            cmd.status = 'failed';
+            cmd.statusText = `✗ Failed — ${err instanceof Error ? err.message : String(err)}`;
+          }
+          this.renderMessageContent(msgIndex, this.messageElements[msgIndex]!.wrapper);
+          const wrapper = this.messageElements[msgIndex]?.wrapper;
+          if (wrapper && this.messageElements[msgIndex]) {
+            this.messageElements[msgIndex]!.height = wrapper.offsetHeight;
+          }
+        }
+      });
+    } else if (cmd.status === 'running') {
+      actionsRow.createDiv({ text: 'Running...', cls: 'stanley-cli-status-running' });
+    } else if (cmd.status === 'success') {
+      actionsRow.createDiv({ text: cmd.statusText || '✓ Success', cls: 'stanley-cli-status-ok' });
+    } else if (cmd.status === 'failed') {
+      actionsRow.createDiv({ text: cmd.statusText || '✗ Failed', cls: 'stanley-cli-status-err' });
+    }
+  }
+
+  private virtualizeMessages(): void {
+    const viewportHeight = this.messagesEl.clientHeight;
+    const scrollTop = this.messagesEl.scrollTop;
+    const scrollBottom = scrollTop + viewportHeight;
+    const buffer = viewportHeight * 2.0;
+
+    const viewportTop = scrollTop - buffer;
+    const viewportBottom = scrollBottom + buffer;
+
+    for (let i = 0; i < this.messageElements.length; i++) {
+      const el = this.messageElements[i]!;
+      const wrapper = el.wrapper;
+      const top = wrapper.offsetTop;
+      const bottom = top + el.height;
+
+      if (bottom < viewportTop || top > viewportBottom) {
+        if (el.rendered) {
+          el.height = wrapper.offsetHeight;
+          wrapper.empty();
+          wrapper.style.height = `${el.height}px`;
+          el.rendered = false;
+        }
+      } else {
+        if (!el.rendered) {
+          wrapper.style.height = '';
+          this.renderMessageContent(i, wrapper);
+          el.rendered = true;
+          el.height = wrapper.offsetHeight;
+        }
+      }
+    }
   }
 }

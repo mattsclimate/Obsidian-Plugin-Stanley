@@ -1,7 +1,7 @@
 import { Notice, Plugin } from 'obsidian';
 import { DEFAULT_STANLEY_SETTINGS, StanleySettingTab } from './settings';
 import type { StanleySettings } from './settings';
-import { OllamaClient } from './services/OllamaClient';
+import { AIProviderManager } from './services/AIProviderManager';
 import { VectorStore } from './services/VectorStore';
 import { EmbeddingService } from './services/EmbeddingService';
 import { PerformanceMonitor } from './services/PerformanceMonitor';
@@ -14,7 +14,7 @@ import { ChatView, VIEW_TYPE_CHAT } from './views/ChatView';
 
 export default class StanleyPlugin extends Plugin {
   settings!: StanleySettings;
-  ollamaClient!: OllamaClient;
+  aiProviderManager!: AIProviderManager;
 
   private store!: VectorStore;
   private embeddingService!: EmbeddingService;
@@ -28,13 +28,9 @@ export default class StanleyPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    this.ollamaClient = new OllamaClient(
-      this.settings.ollamaBaseUrl,
-      this.settings.embeddingModel,
-      this.settings.chatModel
-    );
-    this.store = new VectorStore();
-    this.embeddingService = new EmbeddingService(this.ollamaClient);
+    this.aiProviderManager = new AIProviderManager(this.settings);
+    this.store = new VectorStore(this.settings);
+    this.embeddingService = new EmbeddingService(this.aiProviderManager);
     this.monitor = new PerformanceMonitor();
     this.indexManager = new IndexManager(
       this.app,
@@ -43,13 +39,25 @@ export default class StanleyPlugin extends Plugin {
       this.monitor,
       this
     );
-    this.ragEngine = new RAGEngine(this.ollamaClient, this.store, this.monitor);
+    this.ragEngine = new RAGEngine(this.aiProviderManager, this.store, this.monitor);
     this.cliService = new CLIService(this.app);
     this.skillService = new SkillService(this.app);
     this.vaultService = new VaultService(this.app);
 
+    // Register index manager with performance monitor for throttled background queue control
+    this.monitor.setIndexManager(this.indexManager);
+
     this.registerView(VIEW_TYPE_CHAT, (leaf) =>
-      new ChatView(leaf, this, this.ragEngine, this.indexManager, this.monitor, this.cliService, this.skillService, this.vaultService)
+      new ChatView(
+        leaf,
+        this,
+        this.ragEngine,
+        this.indexManager,
+        this.monitor,
+        this.cliService,
+        this.skillService,
+        this.vaultService
+      )
     );
 
     this.addRibbonIcon('message-circle', 'Open Stanley Chat', () => {
@@ -75,9 +83,9 @@ export default class StanleyPlugin extends Plugin {
 
     this.addSettingTab(new StanleySettingTab(this.app, this));
 
-    const healthy = await this.ollamaClient.checkHealth();
+    const healthy = await this.aiProviderManager.checkHealth();
     if (!healthy) {
-      new Notice(`Stanley: Ollama not reachable at ${this.settings.ollamaBaseUrl}. Indexing skipped.`);
+      new Notice(`Stanley: Active provider (${this.settings.aiProvider.toUpperCase()}) not configured or reachable. Indexing skipped.`);
       return;
     }
 
@@ -87,6 +95,9 @@ export default class StanleyPlugin extends Plugin {
   }
 
   onunload(): void {
+    if (this.monitor) {
+      this.monitor.cleanup();
+    }
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_CHAT);
   }
 

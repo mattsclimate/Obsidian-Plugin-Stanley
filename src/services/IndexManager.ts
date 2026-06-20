@@ -6,9 +6,13 @@ import type { PerformanceMonitor } from './PerformanceMonitor';
 import type StanleyPlugin from '../main';
 import type { StanleySettings } from '../settings';
 
-const BATCH_SIZE = 10;
-
 export class IndexManager {
+  private queue: TFile[] = [];
+  private isRunning = false;
+  private isPaused = false;
+  private resolveInitialIndex?: () => void;
+  private activeTimeout: any = null;
+
   constructor(
     private app: App,
     private store: VectorStore,
@@ -34,31 +38,99 @@ export class IndexManager {
     }
 
     const startMs = Date.now();
-    await this.indexFiles(toIndex);
-    const durationMs = Date.now() - startMs;
+    
+    this.registerEventListeners();
 
+    if (toIndex.length > 0) {
+      // Add all files to queue
+      this.queue = toIndex;
+      
+      const initialIndexPromise = new Promise<void>((resolve) => {
+        this.resolveInitialIndex = resolve;
+      });
+
+      this.startQueueRunner();
+
+      await initialIndexPromise;
+    }
+
+    const durationMs = Date.now() - startMs;
     const cacheHitRate = files.length > 0 ? skipped / files.length : 0;
     const totalChunks = this.store.size;
     this.monitor.recordIndex(totalChunks, durationMs, cacheHitRate);
-
-    this.registerEventListeners();
   }
 
   async reindexAll(): Promise<void> {
+    this.pause();
+    this.queue = [];
     this.store.clear();
     this.plugin.settings.fileModTimes = {};
     await this.plugin.saveSettings();
+    this.resume();
     await this.initialize();
   }
 
-  private async indexFiles(files: TFile[]): Promise<void> {
-    for (let i = 0; i < files.length; i += BATCH_SIZE) {
-      const batch = files.slice(i, i + BATCH_SIZE);
+  pause(): void {
+    this.isPaused = true;
+    if (this.activeTimeout) {
+      clearTimeout(this.activeTimeout);
+      this.activeTimeout = null;
+    }
+  }
+
+  resume(): void {
+    if (this.isPaused) {
+      this.isPaused = false;
+      this.startQueueRunner();
+    }
+  }
+
+  queueFile(file: TFile): void {
+    // Prevent duplicates in queue
+    if (!this.queue.some((f) => f.path === file.path)) {
+      this.queue.push(file);
+    }
+    this.startQueueRunner();
+  }
+
+  private startQueueRunner(): void {
+    if (this.isRunning || this.isPaused || this.queue.length === 0) return;
+    this.isRunning = true;
+    void this.processNextBatch();
+  }
+
+  private async processNextBatch(): Promise<void> {
+    if (this.isPaused || this.queue.length === 0) {
+      this.isRunning = false;
+      if (this.queue.length === 0 && this.resolveInitialIndex) {
+        this.resolveInitialIndex();
+        this.resolveInitialIndex = undefined;
+      }
+      return;
+    }
+
+    // Determine batch size and throttle delay based on settings
+    const ecoMode = this.plugin.settings.ecoMode;
+    const batchSize = ecoMode ? 2 : 10;
+    const throttleMs = ecoMode ? 5000 : 1000;
+
+    const batch = this.queue.slice(0, batchSize);
+    this.queue = this.queue.slice(batchSize);
+
+    try {
       await Promise.all(batch.map((file) => this.indexFile(file)));
+      if (batch.length > 0) {
+        await this.plugin.saveSettings();
+      }
+    } catch (err) {
+      console.error('Stanley: Error indexing batch', err);
     }
-    if (files.length > 0) {
-      await this.plugin.saveSettings();
-    }
+
+    // Schedule next batch
+    this.activeTimeout = setTimeout(() => {
+      this.activeTimeout = null;
+      void this.processNextBatch();
+    }, throttleMs);
   }
 
   private async indexFile(file: TFile): Promise<void> {
@@ -74,12 +146,12 @@ export class IndexManager {
   private registerEventListeners(): void {
     this.plugin.registerEvent(
       this.app.vault.on('modify', (abstract: TAbstractFile) => {
-        if (abstract instanceof TFile) void this.indexFile(abstract);
+        if (abstract instanceof TFile) this.queueFile(abstract);
       })
     );
     this.plugin.registerEvent(
       this.app.workspace.on('file-open', (file: TFile | null) => {
-        if (file) void this.indexFile(file);
+        if (file) this.queueFile(file);
       })
     );
     this.plugin.registerEvent(
@@ -87,6 +159,8 @@ export class IndexManager {
         if (abstract instanceof TFile) {
           this.store.removeByFile(abstract.path);
           delete this.plugin.settings.fileModTimes[abstract.path];
+          // Remove from queue if it was pending
+          this.queue = this.queue.filter((f) => f.path !== abstract.path);
         }
       })
     );

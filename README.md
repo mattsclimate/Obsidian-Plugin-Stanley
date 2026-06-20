@@ -38,6 +38,28 @@ Stanley is optimized for resource-constrained systems (like the Surface Go 2, 4G
    `VaultFolder/.obsidian/plugins/obsidian-plugin-stanley/`
 3. Open Obsidian settings, head to **Community Plugins**, and enable **Stanley**.
 
+### 📱 Installing on Surface Go 2 & Low-Spec Devices
+
+To set up and optimize Stanley on resource-constrained systems like the Surface Go 2:
+
+1. **Pull the Surface Go 2 branch:**
+   ```bash
+   git checkout Surface-Go-2
+   git pull origin Surface-Go-2
+   ```
+2. **Build the bundle:**
+   ```bash
+   npm install
+   npm run build
+   ```
+3. **Copy to your Vault:** Move `main.js`, `styles.css`, and `manifest.json` to:
+   `<Your-Vault>/.obsidian/plugins/obsidian-plugin-stanley/`
+4. **Enable and configure Eco Mode:**
+   - In Obsidian, go to **Settings** -> **Community Plugins** and toggle **Stanley** on.
+   - Open **Stanley Settings**.
+   - Toggle **Eco / Low-Spec Hardware Mode** to **ON** (automatically drops queue sizes, caps context, and enables memory-compressed Float32 storage).
+   - Set **LLM Chat Provider** to a cloud service (e.g., Anthropic Claude or Google Gemini) and input your API keys to bypass local model RAM usage.
+
 ---
 
 ## Development

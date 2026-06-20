@@ -53,4 +53,16 @@ export class VaultService {
 
     return null;
   }
+
+  async appendLink(file: TFile, targetPath: string): Promise<void> {
+    const linkTarget = targetPath.endsWith('.md') ? targetPath.slice(0, -3) : targetPath;
+    await this.app.vault.append(file, `\n\nSee also: [[${linkTarget}]]`);
+  }
+
+  async updateFrontmatter(file: TFile, key: string, value: string): Promise<void> {
+    await this.app.fileManager.processFrontMatter(file, (fm) => {
+      fm[key] = value;
+    });
+  }
 }
+

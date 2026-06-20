@@ -154,4 +154,36 @@ describe('IndexManager', () => {
       vi.stubGlobal('setTimeout', originalSetTimeout);
     });
   });
+
+  describe('lintVault', () => {
+    it('flags missing frontmatter for files in wiki/ and broken wikilinks', async () => {
+      const file1 = makeFile('wiki/a.md', 1000);
+      const file2 = makeFile('wiki/b.md', 2000);
+      const file3 = makeFile('c.md', 3000);
+      
+      vi.spyOn(mockApp.vault, 'getMarkdownFiles').mockReturnValue([file1, file2, file3]);
+      
+      vi.spyOn(mockApp.vault, 'read').mockImplementation(async (file: TFile) => {
+        if (file.path === 'wiki/a.md') {
+          return 'No frontmatter here, but links [[wiki/b.md]] and [[non-existent]]';
+        }
+        if (file.path === 'wiki/b.md') {
+          return '---\ntitle: B\n---\nHas frontmatter and link to [[c]] and [[wiki/a]]';
+        }
+        if (file.path === 'c.md') {
+          return 'Link to [[wiki/b]]';
+        }
+        return '';
+      });
+
+      const plugin = makePlugin({});
+      const manager = new IndexManager(mockApp, mockStore, mockEmbeddingService, mockMonitor, plugin);
+      const issues = await manager.lintVault();
+
+      expect(issues).toContain('[Missing Frontmatter] [[wiki/a.md]] has no frontmatter');
+      expect(issues).toContain('[Broken Link] [[wiki/a.md]] points to non-existent [[non-existent]]');
+      expect(issues).not.toContain('[Broken Link] [[wiki/a.md]] points to non-existent [[wiki/b.md]]');
+      expect(issues).not.toContain('[Missing Frontmatter] [[wiki/b.md]] has no frontmatter');
+    });
+  });
 });

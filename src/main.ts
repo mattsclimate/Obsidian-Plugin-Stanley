@@ -39,10 +39,10 @@ export default class StanleyPlugin extends Plugin {
       this.monitor,
       this
     );
-    this.ragEngine = new RAGEngine(this.aiProviderManager, this.store, this.monitor);
-    this.cliService = new CLIService(this.app);
-    this.skillService = new SkillService(this.app);
     this.vaultService = new VaultService(this.app);
+    this.ragEngine = new RAGEngine(this.aiProviderManager, this.store, this.monitor, this.app);
+    this.cliService = new CLIService(this.app, this.vaultService);
+    this.skillService = new SkillService(this.app);
 
     // Register index manager with performance monitor for throttled background queue control
     this.monitor.setIndexManager(this.indexManager);

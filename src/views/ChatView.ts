@@ -261,7 +261,11 @@ export class ChatView extends ItemView {
     } else if (lastSlash !== -1 && (lastSlash === 0 || /\s/.test(textBeforeCursor[lastSlash - 1]!))) {
       const query = textBeforeCursor.substring(lastSlash + 1).toLowerCase();
       const skills = await this.skillService.listSkills();
-      const filtered = skills.filter(s => s.id.includes(query) || s.name.toLowerCase().includes(query));
+      const allSkills = [
+        { id: 'lint', name: 'Lint Wiki', description: 'Run local linter', path: '' },
+        ...skills
+      ];
+      const filtered = allSkills.filter(s => s.id.includes(query) || s.name.toLowerCase().includes(query));
       if (filtered.length > 0) {
         this.renderSuggestMenu(filtered, 'skill', lastSlash);
       } else {
@@ -412,6 +416,32 @@ export class ChatView extends ItemView {
     const wrapper = this.messageElements[msgIndex]!.wrapper;
     const bubble = wrapper.querySelector('.stanley-bubble-assistant') as HTMLElement;
     let streamedText = '';
+
+    if (query.trim() === '/lint') {
+      try {
+        const issues = await this.indexManager.lintVault();
+        let report = '';
+        if (issues.length === 0) {
+          report = '### Wiki Linter Report\n\nNo issues found in your vault! All `wiki/` pages have frontmatter and all internal `[[wikilinks]]` resolve correctly. 🌟';
+        } else {
+          report = `### Wiki Linter Report\n\nFound **${issues.length}** issue(s) in your vault:\n\n` + 
+            issues.map(iss => `- ${iss}`).join('\n');
+        }
+        
+        this.history[msgIndex]!.content = report;
+        this.renderMessageContent(msgIndex, wrapper);
+        this.messageElements[msgIndex]!.height = wrapper.offsetHeight;
+        this.messageElements[msgIndex]!.rendered = true;
+      } catch (err) {
+        if (this.messageElements[msgIndex]!.rendered) {
+          bubble.textContent = `Linter Error: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      } finally {
+        this.sendBtn.disabled = false;
+        this.inputEl.focus();
+      }
+      return;
+    }
 
     try {
       let finalQuery = query;

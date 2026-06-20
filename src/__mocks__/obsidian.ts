@@ -170,6 +170,8 @@ export class Vault {
     return Promise.resolve(new TFile(_path));
   }
   modify(_file: TFile, _content: string): Promise<void> { return Promise.resolve(); }
+  append(_file: TFile, _content: string): Promise<void> { return Promise.resolve(); }
+  getAbstractFileByPath(_path: string): TAbstractFile | null { return null; }
 }
 
 export class Workspace {

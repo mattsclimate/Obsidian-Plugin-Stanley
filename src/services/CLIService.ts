@@ -1,4 +1,5 @@
 import { App, Notice, TFile, MarkdownView } from 'obsidian';
+import { VaultService } from './VaultService';
 
 export interface CLICommand {
   command: string;
@@ -7,7 +8,7 @@ export interface CLICommand {
 }
 
 export class CLIService {
-  constructor(private app: App) {}
+  constructor(private app: App, private vaultService: VaultService) {}
 
   /**
    * Parses a string like: obsidian create name="My Note" silent overwrite
@@ -27,7 +28,13 @@ export class CLIService {
       const part = parts[i]!;
       if (part.includes('=')) {
         const [key, ...valParts] = part.split('=');
-        if (key) args[key] = valParts.join('=').replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+        if (key) {
+          let val = valParts.join('=');
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.substring(1, val.length - 1);
+          }
+          args[key] = val.replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+        }
       } else {
         flags.add(part);
       }
@@ -37,7 +44,7 @@ export class CLIService {
   }
 
   private tokenize(input: string): string[] {
-    const regex = /[^\s"']+|"([^"]*)"|'([^']*)'/g;
+    const regex = /[^\s"'=]+=(?:"[^"]*"|'[^']*'|[^\s]+)|[^\s"']+|"[^"]*"|'[^']*'/g;
     const tokens: string[] = [];
     let match;
     while ((match = regex.exec(input)) !== null) {
@@ -60,6 +67,8 @@ export class CLIService {
         return await this.handleSearch(cmd);
       case 'property:set':
         return await this.handlePropertySet(cmd);
+      case 'append_link':
+        return await this.handleAppendLink(cmd);
       case 'eval':
         return await this.handleEval(cmd);
       default:
@@ -146,10 +155,20 @@ export class CLIService {
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) return `File not found: ${path}`;
 
-    await this.app.fileManager.processFrontMatter(file, (fm) => {
-      fm[name] = value;
-    });
+    await this.vaultService.updateFrontmatter(file, name, value);
     return `Set property "${name}" to "${value}" in ${path}`;
+  }
+
+  private async handleAppendLink(cmd: CLICommand): Promise<string> {
+    const path = cmd.args.path || (cmd.args.file ? (cmd.args.file.endsWith('.md') ? cmd.args.file : `${cmd.args.file}.md`) : null);
+    const target = cmd.args.target;
+    if (!path || !target) return 'Missing file or target for append_link';
+    
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return `File not found: ${path}`;
+    
+    await this.vaultService.appendLink(file, target);
+    return `Appended link to [[${target}]] in ${path}`;
   }
 
   private async handleEval(cmd: CLICommand): Promise<string> {

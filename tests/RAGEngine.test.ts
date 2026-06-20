@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { TFile } from 'obsidian';
 import { RAGEngine } from '../src/services/RAGEngine';
 import type { OllamaClient } from '../src/services/OllamaClient';
 import type { VectorStore } from '../src/services/VectorStore';
@@ -46,7 +47,14 @@ describe('RAGEngine', () => {
       maybeAutoTune: vi.fn().mockImplementation((s) => s),
     } as unknown as PerformanceMonitor;
 
-    engine = new RAGEngine(mockClient, mockStore, mockMonitor);
+    const mockApp = {
+      vault: {
+        getAbstractFileByPath: vi.fn().mockReturnValue(null),
+        read: vi.fn(),
+      }
+    } as any;
+
+    engine = new RAGEngine(mockClient, mockStore, mockMonitor, mockApp);
   });
 
   it('embeds the user query', async () => {
@@ -102,5 +110,25 @@ describe('RAGEngine', () => {
     const tokens: string[] = [];
     await engine.query('hi', settings, (t) => tokens.push(t));
     expect(tokens).toEqual(['Hello', ' there']);
+  });
+
+  it('prepends CLAUDE.md instructions to the system prompt if present', async () => {
+    const mockApp = {
+      vault: {
+        getAbstractFileByPath: vi.fn().mockImplementation((path) => {
+          if (path === 'CLAUDE.md') {
+            return new TFile('CLAUDE.md');
+          }
+          return null;
+        }),
+        read: vi.fn().mockResolvedValue('CLAUDE RULES CONTENT'),
+      }
+    } as any;
+    const testEngine = new RAGEngine(mockClient, mockStore, mockMonitor, mockApp);
+    await testEngine.query('What is X?', settings, () => {});
+    const chatCall = vi.mocked(mockClient.chat).mock.calls[0];
+    const messages = chatCall?.[0];
+    const systemMessage = messages?.find((m) => m.role === 'user');
+    expect(systemMessage?.content).toContain('CLAUDE RULES CONTENT');
   });
 });

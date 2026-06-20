@@ -178,4 +178,59 @@ export class IndexManager {
       })
     );
   }
+
+  async lintVault(): Promise<string[]> {
+    const files = this.app.vault.getMarkdownFiles();
+    const issues: string[] = [];
+
+    const validPaths = new Set<string>();
+    const validBasenames = new Set<string>();
+
+    for (const file of files) {
+      validPaths.add(file.path);
+      validPaths.add(file.path.replace(/\.md$/, ''));
+      validBasenames.add(file.name);
+      validBasenames.add(file.basename);
+    }
+
+    const linkRegex = /\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]/g;
+
+    for (const file of files) {
+      try {
+        const content = await this.app.vault.read(file);
+        
+        // Check for missing frontmatter for files in the wiki/ directory
+        const isWikiFile = file.path.startsWith('wiki/') || file.path.split('/').includes('wiki');
+        if (isWikiFile) {
+          const startsWithFrontmatter = /^---\r?\n[\s\S]*?\r?\n---/.test(content);
+          if (!startsWithFrontmatter) {
+            issues.push(`[Missing Frontmatter] [[${file.path}]] has no frontmatter`);
+          }
+        }
+
+        // Scan for broken wikilinks
+        let match;
+        const checkedInFile = new Set<string>();
+        // Reset regex index for this file content
+        linkRegex.lastIndex = 0;
+        while ((match = linkRegex.exec(content)) !== null) {
+          const target = match[1]!.trim();
+          if (!target) continue;
+          
+          if (checkedInFile.has(target)) continue;
+          checkedInFile.add(target);
+
+          if (!validPaths.has(target) && !validBasenames.has(target)) {
+            issues.push(`[Broken Link] [[${file.path}]] points to non-existent [[${target}]]`);
+          }
+        }
+      } catch (err) {
+        console.error(`Stanley: Linter error reading ${file.path}`, err);
+        issues.push(`[Read Error] Could not read [[${file.path}]]: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    return issues;
+  }
 }
+

@@ -1,4 +1,4 @@
-import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf, setIcon, Menu } from 'obsidian';
+import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf, setIcon } from 'obsidian';
 import type StanleyPlugin from '../main';
 import type { RAGEngine } from '../services/RAGEngine';
 import type { IndexManager } from '../services/IndexManager';
@@ -6,7 +6,7 @@ import type { PerformanceMonitor } from '../services/PerformanceMonitor';
 import type { CLIService } from '../services/CLIService';
 import type { SkillService, Skill } from '../services/SkillService';
 import type { VaultService, VaultItem } from '../services/VaultService';
-import type { ChatMessage } from '../types';
+import { ModelCatalogService } from '../services/ModelCatalogService';
 
 export const VIEW_TYPE_CHAT = 'stanley-chat-view';
 
@@ -18,6 +18,7 @@ export class ChatView extends ItemView {
   private cliService: CLIService;
   private skillService: SkillService;
   private vaultService: VaultService;
+  private modelCatalog = new ModelCatalogService();
 
   private messagesEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
@@ -130,7 +131,8 @@ export class ChatView extends ItemView {
 
   private updateModelSelectorText(): void {
     this.modelSelectorEl.empty();
-    const name = this.plugin.settings.chatModel.split(':')[0] || this.plugin.settings.chatModel;
+    const selected = this.plugin.settings.selectedChatModel;
+    const name = selected.label || selected.model || this.plugin.settings.chatModel;
     this.modelSelectorEl.createEl('span', { text: name });
     const icon = this.modelSelectorEl.createDiv({ cls: 'stanley-selector-chevron' });
     setIcon(icon, 'chevron-down');
@@ -148,30 +150,40 @@ export class ChatView extends ItemView {
     menu.style.left = `${rect.left}px`;
     menu.style.bottom = `${window.innerHeight - rect.top + 8}px`;
 
-    const models = await this.plugin.ollamaClient.listModels();
-    
-    for (const model of models) {
-      const item = menu.createDiv({ 
-        cls: `stanley-dropdown-item ${model === this.plugin.settings.chatModel ? 'is-selected' : ''}` 
-      });
-      const name = model.split(':')[0] || model;
-      item.createDiv({ text: name, cls: 'stanley-model-name' });
-      
-      // Artificial descriptions for a premium feel
-      let desc = 'Standard model';
-      if (model.includes('llama3')) desc = 'Most capable for ambitious work';
-      if (model.includes('mistral')) desc = 'Efficient for everyday tasks';
-      if (model.includes('phi3')) desc = 'Fastest for quick answers';
-      
-      item.createDiv({ text: desc, cls: 'stanley-model-desc' });
-      
-      item.addEventListener('click', async () => {
-        this.plugin.settings.chatModel = model;
-        this.plugin.ollamaClient.chatModel = model;
-        await this.plugin.saveSettings();
-        this.updateModelSelectorText();
-        menu.remove();
-      });
+    const models = await this.plugin.ollamaClient.listModels().catch(() => [this.plugin.settings.chatModel]);
+    const selectedId = this.modelCatalog.modelId(this.plugin.settings.selectedChatModel);
+    const groups = this.modelCatalog.getModelGroups(models, this.plugin.settings);
+
+    for (const group of groups) {
+      menu.createDiv({ text: group.label, cls: 'stanley-dropdown-section' });
+      for (const model of group.models) {
+        const item = menu.createDiv({
+          cls: `stanley-dropdown-item ${model.id === selectedId ? 'is-selected' : ''} ${model.available ? '' : 'is-disabled'}`,
+        });
+        item.createDiv({ text: model.label, cls: 'stanley-model-name' });
+        item.createDiv({
+          text: model.available ? model.description : 'Enable cloud models and add this provider key',
+          cls: 'stanley-model-desc',
+        });
+
+        if (!model.available) continue;
+        item.addEventListener('click', async () => {
+          this.plugin.settings.selectedChatModel = {
+            provider: model.provider,
+            model: model.model,
+            label: model.label,
+          };
+          if (model.provider === 'local') {
+            this.plugin.settings.chatModel = model.model;
+            this.plugin.ollamaClient.chatModel = model.model;
+          } else {
+            this.plugin.settings.cloudProvider = model.provider;
+          }
+          await this.plugin.saveSettings();
+          this.updateModelSelectorText();
+          menu.remove();
+        });
+      }
     }
 
     menu.createDiv({ cls: 'stanley-dropdown-divider' });
@@ -352,16 +364,23 @@ export class ChatView extends ItemView {
     }
   }
 
-  private async handleSend(): Promise<void> {
-    const query = this.inputEl.value.trim();
+  private async handleSend(
+    cloudApprovedForRequest = false,
+    queryOverride?: string,
+    appendUser = true,
+    precomputedPrompt?: string
+  ): Promise<void> {
+    const query = (queryOverride ?? this.inputEl.value).trim();
     if (!query) return;
 
     this.lastQuery = query;
-    this.inputEl.value = '';
-    this.inputEl.style.height = 'auto';
+    if (!queryOverride) {
+      this.inputEl.value = '';
+      this.inputEl.style.height = 'auto';
+    }
     this.sendBtn.disabled = true;
 
-    this.appendMessage('user', query);
+    if (appendUser) this.appendMessage('user', query);
 
     const streamingEl = this.appendStreamingBubble();
     let streamedText = '';
@@ -396,13 +415,22 @@ export class ChatView extends ItemView {
           streamingEl.textContent = streamedText;
           this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight, behavior: 'smooth' });
         },
-        explicitContext
+        explicitContext,
+        {
+          cloudApprovedForRequest,
+          wifiConnected: navigator.onLine,
+          mempalaceContent: await this.plugin.readMemPalace(),
+          precomputedPrompt,
+        }
       );
 
       await this.parseAndExecuteActions(result.response);
       const cleanResponse = this.stripActionTags(result.response);
       streamingEl.textContent = '';
       await MarkdownRenderer.renderMarkdown(cleanResponse, streamingEl, '', this);
+      if (result.requiresCloudApproval) {
+        this.renderCloudApprovalButton(streamingEl, query, result.pendingPrompt);
+      }
 
       if (result.settings !== this.plugin.settings) {
         this.plugin.settings = result.settings;
@@ -439,6 +467,13 @@ export class ChatView extends ItemView {
     if (label) block.createDiv({ cls: 'stanley-cli-header', text: label });
     block.createEl('code', { text: commandStr, cls: 'stanley-cli-command' });
 
+    if (/^obsidian\s+eval\b/.test(commandStr.trim())) {
+      block.createDiv({
+        cls: 'stanley-cli-eval-warning',
+        text: '⚠ This runs arbitrary code with full access to your vault. Only run it if you wrote or fully understand this command.',
+      });
+    }
+
     const actionsRow = block.createDiv({ cls: 'stanley-cli-actions' });
     const runBtn = actionsRow.createEl('button', { text: 'Run', cls: 'stanley-cli-run-btn' });
     const cancelBtn = actionsRow.createEl('button', { text: 'Cancel', cls: 'stanley-cli-cancel-btn' });
@@ -451,6 +486,7 @@ export class ChatView extends ItemView {
       if (cmd) {
         try {
           const result = await this.cliService.execute(cmd);
+          await this.plugin.appendMemPalace('approved-action', label ?? cmd.command, ['assistant-action', cmd.command], []);
           actionsRow.empty();
           actionsRow.createDiv({ text: `✓ ${result}`, cls: 'stanley-cli-status-ok' });
         } catch (err) {
@@ -458,6 +494,20 @@ export class ChatView extends ItemView {
           actionsRow.createDiv({ text: `✗ Failed — ${err instanceof Error ? err.message : String(err)}`, cls: 'stanley-cli-status-err' });
         }
       }
+    });
+  }
+
+  private renderCloudApprovalButton(container: HTMLElement, query: string, pendingPrompt?: string): void {
+    const row = container.createDiv({ cls: 'stanley-cli-actions' });
+    const approveBtn = row.createEl('button', { text: 'Send to cloud', cls: 'stanley-cli-run-btn' });
+    const cancelBtn = row.createEl('button', { text: 'Cancel', cls: 'stanley-cli-cancel-btn' });
+
+    cancelBtn.addEventListener('click', () => row.remove());
+    approveBtn.addEventListener('click', async () => {
+      approveBtn.disabled = true;
+      await this.plugin.appendMemPalace('cloud-approved', `Approved cloud request for ${this.plugin.settings.selectedChatModel.label}`, ['cloud', this.plugin.settings.selectedChatModel.provider], []);
+      void this.handleSend(true, query, false, pendingPrompt);
+      row.remove();
     });
   }
 

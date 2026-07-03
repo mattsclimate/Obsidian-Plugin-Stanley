@@ -3,6 +3,9 @@ import { RAGEngine } from '../src/services/RAGEngine';
 import type { OllamaClient } from '../src/services/OllamaClient';
 import type { VectorStore } from '../src/services/VectorStore';
 import type { PerformanceMonitor } from '../src/services/PerformanceMonitor';
+import { ModelRouter } from '../src/services/ModelRouter';
+import { MemPalaceService } from '../src/services/MemPalaceService';
+import type { CloudModelClient } from '../src/services/CloudModelClient';
 import type { StanleySettings } from '../src/settings';
 import type { EmbeddedChunk } from '../src/types';
 
@@ -10,12 +13,24 @@ const settings: StanleySettings = {
   ollamaBaseUrl: 'http://localhost:11434',
   embeddingModel: 'nomic-embed-text',
   chatModel: 'llama3',
+  selectedChatModel: { provider: 'local', model: 'llama3', label: 'llama3' },
   chunkSize: 500,
   chunkOverlap: 50,
   topK: 3,
   maxContextTokens: 4096,
   autoTuneEnabled: false,
   fileModTimes: {},
+  extendedThinking: false,
+  showStats: false,
+  cloudEnabled: false,
+  cloudProvider: 'anthropic',
+  cloudApiKeys: { anthropic: '', google: '', openai: '' },
+  surfaceGoMode: true,
+  batterySaverMode: false,
+  cloudOnlyOnWifi: true,
+  mempalaceEnabled: true,
+  onboardingCompleted: false,
+  workspaceMode: 'daily',
 };
 
 function makeChunk(filePath: string, content: string): EmbeddedChunk {
@@ -102,5 +117,35 @@ describe('RAGEngine', () => {
     const tokens: string[] = [];
     await engine.query('hi', settings, (t) => tokens.push(t));
     expect(tokens).toEqual(['Hello', ' there']);
+  });
+
+  it('returns a cloud context preview without calling a cloud provider before approval', async () => {
+    const cloudClient = { complete: vi.fn() } as unknown as CloudModelClient;
+    const cloudEngine = new RAGEngine(
+      mockClient,
+      mockStore,
+      mockMonitor,
+      new ModelRouter(),
+      cloudClient,
+      new MemPalaceService()
+    );
+    const cloudSettings = {
+      ...settings,
+      cloudEnabled: true,
+      selectedChatModel: { provider: 'anthropic' as const, model: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+      cloudApiKeys: { anthropic: 'sk-ant', google: '', openai: '' },
+    };
+
+    const result = await cloudEngine.query('draft a long plan', cloudSettings, () => {}, [], {
+      cloudApprovedForRequest: false,
+      wifiConnected: true,
+      mempalaceContent: '- 2026-07-03T12:00:00.000Z | planning | Created daily plan note | tags: daily, plan',
+    });
+
+    expect(result.response).toContain('Cloud context preview');
+    expect(result.response).toContain('Claude Sonnet 5');
+    expect(result.response).toContain('Created daily plan note');
+    expect(cloudClient.complete).not.toHaveBeenCalled();
+    expect(mockClient.chat).not.toHaveBeenCalled();
   });
 });

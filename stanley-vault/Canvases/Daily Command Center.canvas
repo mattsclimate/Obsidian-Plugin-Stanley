@@ -1,0 +1,41 @@
+{
+  "nodes": [
+    {
+      "id": "title",
+      "type": "text",
+      "text": "# Daily Command Center\nStart here, then import your first files.",
+      "x": 0,
+      "y": 0,
+      "width": 420,
+      "height": 140
+    },
+    {
+      "id": "today",
+      "type": "file",
+      "file": "Calendar/README.md",
+      "x": 0,
+      "y": 190,
+      "width": 360,
+      "height": 160
+    },
+    {
+      "id": "tasks",
+      "type": "text",
+      "text": "## Tasks\n- Inline tasks stay in notes\n- Bigger actions can become task notes",
+      "x": 420,
+      "y": 190,
+      "width": 360,
+      "height": 160
+    },
+    {
+      "id": "review-lane",
+      "type": "group",
+      "label": "Stanley Review Lane",
+      "x": 840,
+      "y": 0,
+      "width": 500,
+      "height": 520
+    }
+  ],
+  "edges": []
+}

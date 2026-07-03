@@ -1,6 +1,6 @@
 # Stanley Obsidian Plugin
 
-Privacy-first RAG chat plugin for Obsidian. Indexes vault notes via local Ollama embeddings and provides a streaming chat interface in the right sidebar.
+Local-first RAG chat plugin for Obsidian. Indexes vault notes via local Ollama embeddings and provides a streaming chat interface in the right sidebar. Cloud models (Anthropic/Google/OpenAI) are opt-in and off by default — see Cloud Models below.
 
 ## Commands
 
@@ -24,7 +24,10 @@ src/
 │   ├── VectorStore.ts        # In-memory EmbeddedChunk[] with cosine similarity search
 │   ├── EmbeddingService.ts   # chunkNote() + embedChunks() via OllamaClient
 │   ├── IndexManager.ts       # First-run / incremental / on-open indexing
-│   ├── RAGEngine.ts          # query() → embed → search → prompt → stream
+│   ├── RAGEngine.ts          # query() → embed → search → prompt → route (local/cloud) → stream
+│   ├── ModelRouter.ts        # Decides local-fast/local-rag/cloud-preview/cloud per task + settings
+│   ├── CloudModelClient.ts   # fetch wrappers for Anthropic/Google/OpenAI completions
+│   ├── ModelCatalogService.ts# Builds the model picker's local + cloud option groups
 │   └── PerformanceMonitor.ts # recordQuery/Index, getStats, maybeAutoTune
 └── views/
     └── ChatView.ts           # Right sidebar ItemView, streaming chat UI
@@ -35,7 +38,13 @@ src/
 - **In-memory vector store**: Rebuilt on each Obsidian session. Fast for vaults up to ~10k notes. No native deps.
 - **Incremental indexing**: `fileModTimes` in plugin data tracks per-file mtimes. Only changed files are re-embedded on load.
 - **Auto-tuning**: After every 10 queries, `PerformanceMonitor.maybeAutoTune()` adjusts `topK` and `chunkSize` based on latency and token usage.
-- **No external calls**: All inference via local Ollama. `OllamaClient` uses `fetch()` (built into Electron).
+- **Local by default**: All inference runs via local Ollama unless the user explicitly enables and selects a cloud model.
+
+## Cloud Models
+
+Cloud models (Anthropic, Google, OpenAI) are off by default (`cloudEnabled: false`). When enabled, `ModelRouter` still routes most tasks to `local-rag`; only tasks in `cloudUsefulFor` (`deep-synthesis`, `draft`, `large-extraction`, `reorg-plan`) can route to cloud, and even then the first request for a given approval-window returns a `cloud-preview` — the exact prompt that will be sent, unabbreviated at the point of send — and requires an explicit "Send to cloud" click before `CloudModelClient` is called. `RAGEngine.query()`'s `precomputedPrompt` option guarantees the approved preview and the request actually sent are byte-identical (no re-embed/re-search in between). API keys live in plugin data (`data.json`) in plaintext for v1 — Obsidian has no encrypted secret store — so treat that file as sensitive.
+
+Retrieved vault content is treated as untrusted data in the system prompt (see the `CONTEXT SAFETY` block in `RAGEngine.ts`): the model is instructed not to follow directives that appear inside retrieved notes, since RAG context is attacker-reachable if a vault ever ingests untrusted files.
 
 ## Prerequisites
 

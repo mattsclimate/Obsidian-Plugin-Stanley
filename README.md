@@ -2,6 +2,21 @@
 
 Stanley is a local-first RAG (Retrieval-Augmented Generation) engine and AI assistant for your Obsidian vault. It generates embeddings for all your notes to find contextual similarities and allows you to chat with your entire knowledge base.
 
+## Public beta direction
+
+Stanley is becoming a single Obsidian plugin plus a ready-to-open starter vault for a local-first mini-AIOS. The first public-beta spine now includes:
+
+- `stanley-vault/` starter vault with OKF-style `index.md`, `log.md`, templates, canvases, workspace guidance, and typed knowledge areas.
+- Local/offline defaults, with cloud model settings disabled until the user opts in.
+- Surface Go routing governor inspired by `workweave/router`: deterministic work uses no LLM, normal vault chat stays local, and heavy cloud requests require preview approval.
+- Chat-panel model picker for local Ollama models plus configured Claude, Gemini, and ChatGPT/OpenAI models.
+- MemPalace Lite by default via `Memory/MemPalace.md`, injecting compact relevant episodes into chat context.
+- Hybrid search service that labels exact and semantic matches separately.
+- Ingestion records for anything dropped into the vault, with heavy files queued instead of blocking startup.
+- Canvas cowork support that places generated material in a Stanley Review Lane.
+- Workspace mode suggestions that prompt the user instead of surprise-switching layouts.
+- Deterministic librarian autofix for safe frontmatter and wikilink-casing repairs.
+
 This project uses TypeScript to provide type checking and documentation.
 The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
 

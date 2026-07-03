@@ -1,0 +1,23 @@
+{
+  "nodes": [
+    {
+      "id": "project",
+      "type": "file",
+      "file": "Projects/Sample Project.md",
+      "x": 0,
+      "y": 0,
+      "width": 420,
+      "height": 220
+    },
+    {
+      "id": "review-lane",
+      "type": "group",
+      "label": "Stanley Review Lane",
+      "x": 520,
+      "y": 0,
+      "width": 500,
+      "height": 520
+    }
+  ],
+  "edges": []
+}

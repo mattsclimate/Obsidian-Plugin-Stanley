@@ -1,10 +1,31 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
 import type StanleyPlugin from './main';
 
+export type ChatModelProvider = 'local' | 'anthropic' | 'google' | 'openai';
+
+export interface SelectedChatModel {
+  provider: ChatModelProvider;
+  model: string;
+  label: string;
+}
+
+export interface CloudApiKeys {
+  anthropic: string;
+  google: string;
+  openai: string;
+}
+
+export interface CloudModelPresets {
+  anthropic: string[];
+  google: string[];
+  openai: string[];
+}
+
 export interface StanleySettings {
   ollamaBaseUrl: string;
   embeddingModel: string;
   chatModel: string;
+  selectedChatModel: SelectedChatModel;
   chunkSize: number;
   chunkOverlap: number;
   topK: number;
@@ -13,12 +34,23 @@ export interface StanleySettings {
   fileModTimes: Record<string, number>;
   extendedThinking: boolean;
   showStats: boolean;
+  cloudEnabled: boolean;
+  cloudProvider: 'openai' | 'anthropic' | 'google';
+  cloudApiKeys: CloudApiKeys;
+  cloudModelPresets: CloudModelPresets;
+  surfaceGoMode: boolean;
+  batterySaverMode: boolean;
+  cloudOnlyOnWifi: boolean;
+  mempalaceEnabled: boolean;
+  onboardingCompleted: boolean;
+  workspaceMode: 'daily' | 'project' | 'research' | 'review' | 'life-artifacts';
 }
 
 export const DEFAULT_STANLEY_SETTINGS: StanleySettings = {
   ollamaBaseUrl: 'http://localhost:11434',
   embeddingModel: 'nomic-embed-text:latest',
   chatModel: 'llama3',
+  selectedChatModel: { provider: 'local', model: 'llama3', label: 'llama3' },
   chunkSize: 500,
   chunkOverlap: 50,
   topK: 5,
@@ -27,6 +59,20 @@ export const DEFAULT_STANLEY_SETTINGS: StanleySettings = {
   fileModTimes: {},
   extendedThinking: false,
   showStats: false,
+  cloudEnabled: false,
+  cloudProvider: 'anthropic',
+  cloudApiKeys: { anthropic: '', google: '', openai: '' },
+  cloudModelPresets: {
+    anthropic: ['claude-sonnet-5', 'claude-haiku-4-5'],
+    google: ['gemini-3.5-flash', 'gemini-3.1-pro'],
+    openai: ['gpt-5.5', 'gpt-5.4-mini'],
+  },
+  surfaceGoMode: true,
+  batterySaverMode: false,
+  cloudOnlyOnWifi: true,
+  mempalaceEnabled: true,
+  onboardingCompleted: false,
+  workspaceMode: 'daily',
 };
 
 export class StanleySettingTab extends PluginSettingTab {
@@ -179,5 +225,152 @@ export class StanleySettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         })
       );
+
+    new Setting(containerEl)
+      .setName('Cloud models')
+      .setDesc('Off by default. When enabled, Stanley still asks before sending selected vault context.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.cloudEnabled).onChange(async (value) => {
+          this.plugin.settings.cloudEnabled = value;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Cloud provider')
+      .setDesc('Used only after cloud models are enabled and a per-request context preview is approved')
+      .addDropdown((drop) =>
+        drop
+          .addOption('anthropic', 'Anthropic')
+          .addOption('google', 'Google Gemini')
+          .addOption('openai', 'OpenAI')
+          .setValue(this.plugin.settings.cloudProvider)
+          .onChange(async (value: 'openai' | 'anthropic' | 'google') => {
+            this.plugin.settings.cloudProvider = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('Anthropic API key')
+      .setDesc('Stored locally in Obsidian plugin data for v1')
+      .addText((text) =>
+        text
+          .setPlaceholder('sk-ant-...')
+          .setValue(this.plugin.settings.cloudApiKeys.anthropic)
+          .onChange(async (value) => {
+            this.plugin.settings.cloudApiKeys.anthropic = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('Gemini API key')
+      .setDesc('Stored locally in Obsidian plugin data for v1')
+      .addText((text) =>
+        text
+          .setPlaceholder('Google AI Studio key')
+          .setValue(this.plugin.settings.cloudApiKeys.google)
+          .onChange(async (value) => {
+            this.plugin.settings.cloudApiKeys.google = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('OpenAI API key')
+      .setDesc('Stored locally in Obsidian plugin data for v1')
+      .addText((text) =>
+        text
+          .setPlaceholder('sk-...')
+          .setValue(this.plugin.settings.cloudApiKeys.openai)
+          .onChange(async (value) => {
+            this.plugin.settings.cloudApiKeys.openai = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('Claude model IDs')
+      .setDesc('Comma-separated editable cloud presets')
+      .addText((text) =>
+        text
+          .setValue(this.plugin.settings.cloudModelPresets.anthropic.join(', '))
+          .onChange(async (value) => {
+            this.plugin.settings.cloudModelPresets.anthropic = this.parsePresetList(value);
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('Gemini model IDs')
+      .setDesc('Comma-separated editable cloud presets')
+      .addText((text) =>
+        text
+          .setValue(this.plugin.settings.cloudModelPresets.google.join(', '))
+          .onChange(async (value) => {
+            this.plugin.settings.cloudModelPresets.google = this.parsePresetList(value);
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('OpenAI model IDs')
+      .setDesc('Comma-separated editable cloud presets')
+      .addText((text) =>
+        text
+          .setValue(this.plugin.settings.cloudModelPresets.openai.join(', '))
+          .onChange(async (value) => {
+            this.plugin.settings.cloudModelPresets.openai = this.parsePresetList(value);
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('Surface Go mode')
+      .setDesc('Prefer local and deterministic paths for low-resource hardware')
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.surfaceGoMode).onChange(async (value) => {
+          this.plugin.settings.surfaceGoMode = value;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Battery saver mode')
+      .setDesc('Keep heavy requests local/offline even when cloud is configured')
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.batterySaverMode).onChange(async (value) => {
+          this.plugin.settings.batterySaverMode = value;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Cloud only on Wi-Fi')
+      .setDesc('Block cloud routing when Stanley is told Wi-Fi is unavailable')
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.cloudOnlyOnWifi).onChange(async (value) => {
+          this.plugin.settings.cloudOnlyOnWifi = value;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('MemPalace Lite')
+      .setDesc('Inject compact episodic memory into chat context')
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.mempalaceEnabled).onChange(async (value) => {
+          this.plugin.settings.mempalaceEnabled = value;
+          await this.plugin.saveSettings();
+        })
+      );
+  }
+
+  private parsePresetList(value: string): string[] {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
 }

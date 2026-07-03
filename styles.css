@@ -188,6 +188,23 @@
   background: var(--background-modifier-hover);
 }
 
+.stanley-dropdown-section {
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.stanley-dropdown-item.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.stanley-dropdown-item.is-disabled:hover {
+  background: transparent;
+}
+
 .stanley-dropdown-item.is-selected {
   background: var(--background-modifier-hover);
 }

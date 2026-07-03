@@ -483,3 +483,11 @@ input:checked + .stanley-slider:before {
   display: block;
   font-size: 13px;
 }
+
+.stanley-cli-eval-warning {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-error);
+  background: var(--background-modifier-error);
+  border-top: 1px solid var(--background-modifier-border);
+}

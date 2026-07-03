@@ -18,10 +18,20 @@ main.js
 # obsidian
 data.json
 
+# Packaged copies of the vault template — stanley-vault/ is the source of truth
+/*.zip
+
 # Environment variables and secrets
 .env
 .env.*
 .env.local
+*.pem
+*.key
+*.p12
+*.pfx
+*credentials*.json
+*secrets*.json
+.aws/
 
 # Logs
 *.log

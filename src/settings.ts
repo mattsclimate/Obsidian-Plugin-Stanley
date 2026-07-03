@@ -202,8 +202,8 @@ export class StanleySettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Max context tokens')
-      .setDesc('Maximum tokens to include in each chat prompt')
+      .setName('Max response tokens')
+      .setDesc('Caps how long a cloud model\'s reply can be. For local models this is only used as a performance-tuning signal, not a hard limit — it does not trim what gets sent to the model.')
       .addText((text) =>
         text
           .setValue(String(this.plugin.settings.maxContextTokens))
@@ -254,41 +254,44 @@ export class StanleySettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName('Anthropic API key')
       .setDesc('Stored locally in Obsidian plugin data for v1')
-      .addText((text) =>
+      .addText((text) => {
+        text.inputEl.type = 'password';
         text
           .setPlaceholder('sk-ant-...')
           .setValue(this.plugin.settings.cloudApiKeys.anthropic)
           .onChange(async (value) => {
             this.plugin.settings.cloudApiKeys.anthropic = value;
             await this.plugin.saveSettings();
-          })
-      );
+          });
+      });
 
     new Setting(containerEl)
       .setName('Gemini API key')
       .setDesc('Stored locally in Obsidian plugin data for v1')
-      .addText((text) =>
+      .addText((text) => {
+        text.inputEl.type = 'password';
         text
           .setPlaceholder('Google AI Studio key')
           .setValue(this.plugin.settings.cloudApiKeys.google)
           .onChange(async (value) => {
             this.plugin.settings.cloudApiKeys.google = value;
             await this.plugin.saveSettings();
-          })
-      );
+          });
+      });
 
     new Setting(containerEl)
       .setName('OpenAI API key')
       .setDesc('Stored locally in Obsidian plugin data for v1')
-      .addText((text) =>
+      .addText((text) => {
+        text.inputEl.type = 'password';
         text
           .setPlaceholder('sk-...')
           .setValue(this.plugin.settings.cloudApiKeys.openai)
           .onChange(async (value) => {
             this.plugin.settings.cloudApiKeys.openai = value;
             await this.plugin.saveSettings();
-          })
-      );
+          });
+      });
 
     new Setting(containerEl)
       .setName('Claude model IDs')

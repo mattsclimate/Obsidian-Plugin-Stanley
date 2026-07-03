@@ -364,7 +364,12 @@ export class ChatView extends ItemView {
     }
   }
 
-  private async handleSend(cloudApprovedForRequest = false, queryOverride?: string, appendUser = true): Promise<void> {
+  private async handleSend(
+    cloudApprovedForRequest = false,
+    queryOverride?: string,
+    appendUser = true,
+    precomputedPrompt?: string
+  ): Promise<void> {
     const query = (queryOverride ?? this.inputEl.value).trim();
     if (!query) return;
 
@@ -415,6 +420,7 @@ export class ChatView extends ItemView {
           cloudApprovedForRequest,
           wifiConnected: navigator.onLine,
           mempalaceContent: await this.plugin.readMemPalace(),
+          precomputedPrompt,
         }
       );
 
@@ -423,7 +429,7 @@ export class ChatView extends ItemView {
       streamingEl.textContent = '';
       await MarkdownRenderer.renderMarkdown(cleanResponse, streamingEl, '', this);
       if (result.requiresCloudApproval) {
-        this.renderCloudApprovalButton(streamingEl, query);
+        this.renderCloudApprovalButton(streamingEl, query, result.pendingPrompt);
       }
 
       if (result.settings !== this.plugin.settings) {
@@ -461,6 +467,13 @@ export class ChatView extends ItemView {
     if (label) block.createDiv({ cls: 'stanley-cli-header', text: label });
     block.createEl('code', { text: commandStr, cls: 'stanley-cli-command' });
 
+    if (/^obsidian\s+eval\b/.test(commandStr.trim())) {
+      block.createDiv({
+        cls: 'stanley-cli-eval-warning',
+        text: '⚠ This runs arbitrary code with full access to your vault. Only run it if you wrote or fully understand this command.',
+      });
+    }
+
     const actionsRow = block.createDiv({ cls: 'stanley-cli-actions' });
     const runBtn = actionsRow.createEl('button', { text: 'Run', cls: 'stanley-cli-run-btn' });
     const cancelBtn = actionsRow.createEl('button', { text: 'Cancel', cls: 'stanley-cli-cancel-btn' });
@@ -484,7 +497,7 @@ export class ChatView extends ItemView {
     });
   }
 
-  private renderCloudApprovalButton(container: HTMLElement, query: string): void {
+  private renderCloudApprovalButton(container: HTMLElement, query: string, pendingPrompt?: string): void {
     const row = container.createDiv({ cls: 'stanley-cli-actions' });
     const approveBtn = row.createEl('button', { text: 'Send to cloud', cls: 'stanley-cli-run-btn' });
     const cancelBtn = row.createEl('button', { text: 'Cancel', cls: 'stanley-cli-cancel-btn' });
@@ -493,7 +506,7 @@ export class ChatView extends ItemView {
     approveBtn.addEventListener('click', async () => {
       approveBtn.disabled = true;
       await this.plugin.appendMemPalace('cloud-approved', `Approved cloud request for ${this.plugin.settings.selectedChatModel.label}`, ['cloud', this.plugin.settings.selectedChatModel.provider], []);
-      void this.handleSend(true, query, false);
+      void this.handleSend(true, query, false, pendingPrompt);
       row.remove();
     });
   }
